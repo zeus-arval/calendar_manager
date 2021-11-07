@@ -15,18 +15,20 @@ import (
 	"strings"
 	"time"
 
-	screen "github.com/inancgumus/screen"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/calendar/v3"
 	"google.golang.org/api/option"
 )
 
-const OPTIONS_COUNT = 5
-const PRIMARY = "primary"
+const (
+	DATE_PATTERN = "^20\\d{2}-([2-9]|1[0-2]?)-([0][1-9]|[1-2][0-9]|3[0-1])$"
+	TIME_PATTERN = "^([0-1][0-9]|[2][0-3]):[0-5][0-9]$"
+	PRIMARY = "primary"
+	OPTIONS_COUNT = 5
+)
 
 type Option int
-
 const (
 	CREATE_EVENT = 1
 	SHOW_EVENTS  = 2
@@ -52,7 +54,7 @@ func fillOptionsArray(optionsArray *[OPTIONS_COUNT]string) {
 }
 
 func clearScreen() {
-	screen.Clear()
+	fmt.Print("\n\n\n\n\n\n\n\n")
 }
 
 func checkByRegex(value *string, pattern string) bool{
@@ -108,18 +110,16 @@ func createEvent(srv *calendar.Service) {
 
 	seconds := ":00"
 	dateFormat := "YYYY-MM-DD"
-	datePattern := "^20\\d{2}-([2-9]|1[0-2]?)-([0][1-9]|[1-2][0-9]|3[0-1])$"
 	timeFormat := "HH:MM"
-	timePattern := "^([0-1][0-9]|[2][0-3]):[0-5][0-9]$"
 
 	clearScreen()
 
 	scanEventInput(&summary, "summary")
 	scanEventInput(&location, "location")
 	scanEventInput(&description, "description")
-	scanFormattedEventInput(&date, "start date", &dateFormat, datePattern)
-	scanFormattedEventInput(&startTime, "start time", &timeFormat, timePattern)
-	scanFormattedEventInput(&endTime, "end time", &timeFormat, timePattern)
+	scanFormattedEventInput(&date, "start date", &dateFormat, DATE_PATTERN)
+	scanFormattedEventInput(&startTime, "start time", &timeFormat, TIME_PATTERN)
+	scanFormattedEventInput(&endTime, "end time", &timeFormat, TIME_PATTERN)
 
 	event := &calendar.Event{
 		Summary:     summary,
@@ -165,8 +165,77 @@ func showEvents(srv *calendar.Service) {
 	}
 }
 
+func checkAndModifyData(value *string, dataName string){
+	fmt.Printf("Do you want to change %v -> [%v]? (yes/no)\n", dataName, *value)
+	var input string
+	var err error
+
+	isInputCorrect := false
+	for isInputCorrect {
+		input, err = scan()
+		input = strings.Replace(input, "\n", "", -1)
+		if err != nil{
+			log.Fatal(err)
+		}
+		if input == "yes" && input == "no"{
+			isInputCorrect = true
+		}
+	}
+	isInputCorrect = false
+	if input == "yes"{
+		for isInputCorrect {
+			input, err := scan()
+			if err != nil {
+				log.Fatal(err)
+			}
+			if strings.Contains(dataName, "time") {
+				if checkByRegex(&input, TIME_PATTERN) {
+					isInputCorrect = true
+					*value = input
+				}
+			} else if strings.Contains(dataName, "date") {
+				if checkByRegex(&input, DATE_PATTERN) {
+					isInputCorrect = true
+					*value = input
+				}
+			} else {
+				*value = input
+			}
+		}
+	}else if input == "no"{
+		return
+	}
+}
+
+func modifyEventDatas(event *calendar.Event) calendar.Event{
+	checkAndModifyData(&event.Summary, "string")
+	checkAndModifyData(&event.Location, "string")
+	checkAndModifyData(&event.Description, "string")
+	checkAndModifyData(&event.Start.Date, "date")
+	checkAndModifyData(&event.Start.DateTime, "start time")
+	checkAndModifyData(&event.End.DateTime, "end time")
+	return *event
+}
+
 func updateEvent(srv *calendar.Service){
-	
+	showEvents(srv)
+	fmt.Println("\nChoose an event' ID for update")
+	input, err := scan()
+	if err != nil{
+		fmt.Println("Input is incorrect")
+		return
+	}
+	eventId := strings.Replace(input, "\n", "", -1)
+	event, err := srv.Events.Get(PRIMARY, eventId).Do()
+	if err != nil{
+		log.Fatal(err)
+	}
+	*event = modifyEventDatas(event)
+
+	_, err = srv.Events.Update(PRIMARY, eventId, event).Do()
+	if err != nil{
+		log.Fatal(err)
+	}
 }
 
 func removeEvent(srv *calendar.Service){
