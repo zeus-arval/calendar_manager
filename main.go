@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	screen "github.com/inancgumus/screen"
@@ -25,11 +28,11 @@ const PRIMARY = "primary"
 type Option int
 
 const (
-	CREATE_EVENT = 0
-	SHOW_EVENTS  = 1
-	UPDATE_EVENT = 2
-	REMOVE_EVENT = 3
-	Exit         = 4
+	CREATE_EVENT = 1
+	SHOW_EVENTS  = 2
+	UPDATE_EVENT = 3
+	REMOVE_EVENT = 4
+	Exit         = 5
 )
 
 func fillOptions(options *[OPTIONS_COUNT]Option) {
@@ -48,27 +51,50 @@ func fillOptionsArray(optionsArray *[OPTIONS_COUNT]string) {
 	optionsArray[4] = "Exit"
 }
 
-func clearConsole() {
+func clearScreen() {
 	screen.Clear()
+}
+
+func checkByRegex(value *string, pattern string) bool{
+	match, _ := regexp.MatchString(pattern, *value)
+	return match
 }
 
 func printOptionsList(options *[OPTIONS_COUNT]Option, optionsArray *[OPTIONS_COUNT]string) {
 	for index, _ := range options {
-		fmt.Printf("%v -> %v", index, optionsArray[index])
+		fmt.Printf("%v -> %v\n", index + 1, optionsArray[index])
 	}
 }
 
-func scanInput(value *string, description string) {
+func scan() (string, error){
+	reader := bufio.NewReader(os.Stdin)
+	return reader.ReadString('\n')
+}
+
+func scanEventInput(value *string, description string) {
 	fmt.Printf("Enter a %v for event\n", description)
-	if _, err := fmt.Scan(&value); err != nil {
+
+	input, err := scan()
+	if err != nil {
 		log.Fatalf("Unable to read %v: %v", description, err)
 	}
+	*value = strings.Replace(input,  "\n", "", -1)
 }
 
-func scanFormattedInput(value *string, description string, format string){
-	fmt.Printf("Enter a %v for event in format -> %v:\n", description, format)
-	if _, err := fmt.Scan(&value); err != nil {
-		log.Fatalf("Unable to read %v: %v", description, err)
+func scanFormattedEventInput(value *string, description string, format *string, pattern string){
+	fmt.Printf("Enter a %v for event in format -> %v:\n", description, *format)
+	isValueCorrect := false
+	for !isValueCorrect {
+		input, err := scan()
+		if err != nil {
+			log.Fatalf("Unable to read %v: %v", &description, err)
+		}
+		*value = strings.Replace(input,  "\n", "", -1)
+		if checkByRegex(value, pattern){
+			isValueCorrect = true
+		} else {
+			fmt.Println("Invalid format, try again!")
+		}
 	}
 }
 
@@ -76,32 +102,35 @@ func createEvent(srv *calendar.Service) {
 	var summary string
 	var location string
 	var description string
-	var startDate string
+	var date string
 	var startTime string
-	var endDate string
 	var endTime string
 
-	var dateFormat string = "YYYY-MM-DD"
-	var timeFormat string = "HH:MM:SS"
+	seconds := ":00"
+	dateFormat := "YYYY-MM-DD"
+	datePattern := "^20\\d{2}-([2-9]|1[0-2]?)-([0][1-9]|[1-2][0-9]|3[0-1])$"
+	timeFormat := "HH:MM"
+	timePattern := "^([0-1][0-9]|[2][0-3]):[0-5][0-9]$"
 
-	scanInput(&summary, "summary")
-	scanInput(&location, "location")
-	scanInput(&description, "description")
-	scanFormattedInput(&startDate, "start date", dateFormat)
-	scanFormattedInput(&startTime, "start date", timeFormat)
-	scanFormattedInput(&endDate, "start date", dateFormat)
-	scanFormattedInput(&endTime, "start date", timeFormat)
+	clearScreen()
+
+	scanEventInput(&summary, "summary")
+	scanEventInput(&location, "location")
+	scanEventInput(&description, "description")
+	scanFormattedEventInput(&date, "start date", &dateFormat, datePattern)
+	scanFormattedEventInput(&startTime, "start time", &timeFormat, timePattern)
+	scanFormattedEventInput(&endTime, "end time", &timeFormat, timePattern)
 
 	event := &calendar.Event{
 		Summary:     summary,
 		Location:    location,
 		Description: description,
 		Start: &calendar.EventDateTime{
-			DateTime: startDate + "T" + startTime,
+			DateTime: date + "T" + startTime + seconds,
 			TimeZone: "Europe/Tallinn",
 		},
 		End: &calendar.EventDateTime{
-			DateTime: endDate + "T" + endTime,
+			DateTime: date + "T" + endTime + seconds,
 			TimeZone: "Europe/Tallinn",
 		},
 		Recurrence: []string{"RRULE:FREQ=DAILY;COUNT=1"},
@@ -115,6 +144,7 @@ func createEvent(srv *calendar.Service) {
 
 func showEvents(srv *calendar.Service) {
 	t := time.Now().Format(time.RFC3339)
+	clearScreen()
 
 	events, err := srv.Events.List(PRIMARY).ShowDeleted(false).
 		SingleEvents(true).TimeMin(t).MaxResults(10).OrderBy("startTime").Do()
@@ -130,22 +160,29 @@ func showEvents(srv *calendar.Service) {
 			if date == "" {
 				date = item.Start.Date
 			}
-			fmt.Printf("%v (%v)\n", item.Summary, date)
+			fmt.Printf("ID: [%v] -> %v (%v)\n", item.Id, item.Summary, date)
 		}
 	}
 }
 
 func updateEvent(srv *calendar.Service){
-
+	
 }
 
 func removeEvent(srv *calendar.Service){
 	showEvents(srv)
+	fmt.Println("Enter ID of an event you want to delete")
+	input, err := scan()
+	if err != nil{
+		fmt.Println("Input is incorrect")
+		return
+	}
 
-	//event, err := srv.Events.Delete(PRIMARY, )
-	//if err != nil {
-	//	log.Fatalf("Unable to create event. %v\n", err)
-	//}
+	eventId := strings.Replace(input, "\n", "", -1)
+	err = srv.Events.Delete(PRIMARY, eventId).Do()
+	if err != nil{
+		fmt.Printf("Unable to delete event with ID: %v", eventId)
+	}
 }
 
 // Retrieve a token, saves the token, then returns the generated client.
@@ -165,7 +202,10 @@ func getClient(config *oauth2.Config) *http.Client {
 // Request a token from the web, then returns the retrieved token.
 func getTokenFromWeb(config *oauth2.Config) *oauth2.Token {
 	authURL := config.AuthCodeURL("state-token", oauth2.AccessTypeOffline)
-	browser.OpenURL(authURL)
+	err := browser.OpenURL(authURL)
+	if err != nil {
+		return nil
+	}
 
 	fmt.Println("Enter a token given in browser:")
 	var authCode string
@@ -209,8 +249,7 @@ func main() {
 
 	fillOptions(&options)
 	fillOptionsArray(&optionsArray)
-	clearConsole()
-	printOptionsList(&options, &optionsArray)
+	clearScreen()
 
 	ctx := context.Background()
 
@@ -233,6 +272,8 @@ func main() {
 
 	var userInput string
 	for userInput != strconv.Itoa(Exit) {
+		printOptionsList(&options, &optionsArray)
+
 		if _, err := fmt.Scan(&userInput); err != nil {
 			log.Fatalf("There is no option you have choosen: %v", err)
 		}
